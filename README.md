@@ -40,4 +40,6 @@
 - **Reduce errores** humanos centralizando la lógica de entreno y evaluación.  
 - **Agiliza el feedback** al equipo de negocio con reportes y gráficos listos para compartir.
 
+**ML Evaluator** – tu aliado para llevar pipelines de ML de la idea a la producción con confianza y rapidez. 
+
 ---
