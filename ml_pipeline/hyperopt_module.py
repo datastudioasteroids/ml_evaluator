@@ -1,18 +1,17 @@
 # ── hyperparameter_optimizer.py ──────────────────────────────────────────────
 # Módulo para optimización de hiperparámetros usando múltiples estrategias
-# Autor: Claude AI - Optimización avanzada de modelos
-# ──────────────────────────────────────────────────────────────────────────────
+
 
 import numpy as np
 import pandas as pd
 import logging
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List, Union
 import warnings
 warnings.filterwarnings('ignore')
 
 # Imports para optimización
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, cross_val_score
-from sklearn.metrics import make_scorer, r2_score, mean_absolute_error, mean_squared_error
+from sklearn.metrics import make_scorer, r2_score
 import optuna
 from optuna.samplers import TPESampler
 from optuna.pruners import MedianPruner
@@ -20,9 +19,8 @@ from optuna.pruners import MedianPruner
 # Imports de modelos
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import Ridge, Lasso, ElasticNet
-from sklearn.svm import SVR
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.base import RegressorMixin
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +32,11 @@ class HyperparameterOptimizer:
     - Optuna para optimización bayesiana avanzada
     """
     
-    def __init__(self, optimization_method: str = 'optuna', cv_folds: int = 5, 
-                 n_trials: int = 100, timeout: int = 1800):
+    def __init__(self,
+                 optimization_method: str = 'optuna',
+                 cv_folds: int = 5,
+                 n_trials: int = 100,
+                 timeout: int = 1800):
         """
         Inicializa el optimizador
         
@@ -54,7 +55,7 @@ class HyperparameterOptimizer:
         self.scorer = make_scorer(r2_score, greater_is_better=True)
         
         # Historial de optimizaciones
-        self.optimization_history = {}
+        self.optimization_history: Dict[str, Any] = {}
         
     def get_parameter_space(self, model_type: str, target_col: str) -> Dict[str, Any]:
         """
@@ -64,7 +65,6 @@ class HyperparameterOptimizer:
             model_type: Tipo de modelo ('xgb', 'lgbm', 'rf', etc.)
             target_col: 'Quantity' o 'Profit' para ajustes específicos
         """
-        
         # Parámetros base para XGBoost
         if model_type == 'xgb':
             if self.optimization_method == 'grid':
@@ -118,7 +118,12 @@ class HyperparameterOptimizer:
         # Parámetros por defecto
         return {}
     
-    def optimize_with_optuna(self, model, X_train, y_train, target_col: str):
+    def optimize_with_optuna(self,
+                             model: RegressorMixin,
+                             X_train: Union[pd.DataFrame, np.ndarray],
+                             y_train: Union[pd.Series, np.ndarray],
+                             target_col: str
+                             ) -> RegressorMixin:
         """
         Optimización usando Optuna (Bayesian Optimization)
         """
@@ -135,9 +140,12 @@ class HyperparameterOptimizer:
         else:
             model_type = 'xgb'  # Por defecto
         
+        # Preparar datos como numpy arrays
+        X_arr = X_train.values if hasattr(X_train, "values") else X_train
+        y_arr = y_train.values if hasattr(y_train, "values") else y_train
+        
         def objective(trial):
             """Función objetivo para Optuna"""
-            
             # Sugerir parámetros según el modelo
             if model_type == 'xgb':
                 params = {
@@ -150,14 +158,8 @@ class HyperparameterOptimizer:
                     'reg_lambda': trial.suggest_float('reg_lambda', 0, 2),
                     'min_child_weight': trial.suggest_int('min_child_weight', 1, 10)
                 }
-                
-                # Crear modelo con parámetros sugeridos
-                opt_model = XGBRegressor(
-                    random_state=42,
-                    n_jobs=-1,
-                    **params
-                )
-                
+                opt_model = XGBRegressor(random_state=42, n_jobs=-1, **params)
+            
             elif model_type == 'lgbm':
                 params = {
                     'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
@@ -169,15 +171,9 @@ class HyperparameterOptimizer:
                     'reg_alpha': trial.suggest_float('reg_alpha', 0, 2),
                     'reg_lambda': trial.suggest_float('reg_lambda', 0, 2)
                 }
-                
-                opt_model = LGBMRegressor(
-                    random_state=42,
-                    n_jobs=-1,
-                    verbose=-1,
-                    **params
-                )
+                opt_model = LGBMRegressor(random_state=42, n_jobs=-1, verbose=-1, **params)
             
-            else:  # Random Forest o por defecto
+            else:  # Random Forest
                 params = {
                     'n_estimators': trial.suggest_int('n_estimators', 100, 500),
                     'max_depth': trial.suggest_int('max_depth', 5, 20),
@@ -185,41 +181,31 @@ class HyperparameterOptimizer:
                     'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 10),
                     'max_features': trial.suggest_categorical('max_features', ['sqrt', 'log2', 0.8])
                 }
-                
-                opt_model = RandomForestRegressor(
-                    random_state=42,
-                    n_jobs=-1,
-                    **params
-                )
+                opt_model = RandomForestRegressor(random_state=42, n_jobs=-1, **params)
             
-            # Cross-validation
             try:
                 scores = cross_val_score(
-                    opt_model, X_train, y_train,
+                    opt_model,
+                    X_arr, y_arr,
                     cv=self.cv_folds,
                     scoring=self.scorer,
                     n_jobs=-1
                 )
                 return scores.mean()
             except Exception as e:
-                logger.warning(f"Error en trial {trial.number}: {str(e)}")
+                logger.warning(f"Error en trial {trial.number}: {e}")
                 return -999  # Penalizar trials que fallan
         
-        # Crear y ejecutar estudio Optuna
         study = optuna.create_study(
             direction='maximize',
             sampler=TPESampler(seed=42),
             pruner=MedianPruner(n_startup_trials=10, n_warmup_steps=5)
         )
+        study.optimize(objective,
+                       n_trials=self.n_trials,
+                       timeout=self.timeout,
+                       show_progress_bar=True)
         
-        study.optimize(
-            objective, 
-            n_trials=self.n_trials,
-            timeout=self.timeout,
-            show_progress_bar=True
-        )
-        
-        # Obtener mejores parámetros
         best_params = study.best_params
         best_score = study.best_value
         

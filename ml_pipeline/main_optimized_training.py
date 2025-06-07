@@ -1,7 +1,5 @@
 # ── main_optimized_training.py ────────────────────────────────────────────────
 # Módulo principal para entrenamiento optimizado de modelos de ventas
-# Autor: ChatGPT – Experto ML y Python
-# ──────────────────────────────────────────────────────────────────────────────
 
 import os
 import pandas as pd
